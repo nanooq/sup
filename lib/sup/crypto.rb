@@ -167,6 +167,14 @@ EOS
                                {:operation => "encrypt", :options => gpg_opts}) || gpg_opts
     recipients = to + [from]
     recipients = HookManager.run("gpg-expand-keys", { :recipients => recipients }) || recipients
+    debug "recipients in encrypt: #{recipients}"
+## FIXME: does not have problems if key for recipient (i.e. to-field) is not available as a result it will not provide any error if recipient will not be able to read the mail
+## proposed fix: must verify that a key exists for every recipient (maybe use ctx directly? --lf
+    ctx = GPGME::Ctx.new
+    unfound_keys = to.select {|t| (ctx.keys t).size <= 0} 
+    debug "unfound keys: #{unfound_keys}"
+    raise Error, "no keys for #{unfound_keys}" 
+## FIX END
     begin
       if GPGME.respond_to?('encrypt')
         cipher = GPGME.encrypt(recipients, format_payload(payload), gpg_opts)
@@ -175,6 +183,7 @@ EOS
         gpg_opts[:recipients] = recipients
         cipher = crypto.encrypt(format_payload(payload), gpg_opts).read
       end
+    debug "invalid recipients: #{cipher.invalid_recipients}"
     rescue GPGME::Error => exc
       raise Error, gpgme_exc_msg(exc.message)
     end
