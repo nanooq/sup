@@ -126,6 +126,7 @@ EOS
 
     gpg_opts = {:protocol => GPGME::PROTOCOL_OpenPGP, :armor => true, :textmode => true}
     gpg_opts.merge!(gen_sign_user_opts(from))
+    gpg_opts[:signer] = gpg_opts[:signers] # this is a kludge
     gpg_opts = HookManager.run("gpg-options",
                                {:operation => "sign", :options => gpg_opts}) || gpg_opts
     begin
@@ -161,10 +162,12 @@ EOS
     gpg_opts = {:protocol => GPGME::PROTOCOL_OpenPGP, :armor => true, :textmode => true}
     if sign
       gpg_opts.merge!(gen_sign_user_opts(from))
+      debug "user opts generated : #{gen_sign_user_opts(from)}"
       gpg_opts.merge!({:sign => true})
     end
     gpg_opts = HookManager.run("gpg-options",
                                {:operation => "encrypt", :options => gpg_opts}) || gpg_opts
+    debug "signer #{gpg_opts[:signers]}"
     recipients = to + [from]
     recipients = HookManager.run("gpg-expand-keys", { :recipients => recipients }) || recipients
     debug "recipients in encrypt: #{recipients}"
@@ -173,17 +176,22 @@ EOS
     ctx = GPGME::Ctx.new
     unfound_keys = to.select {|t| (ctx.keys t).size <= 0} 
     debug "unfound keys: #{unfound_keys}"
-    raise Error, "no keys for #{unfound_keys}" 
+    if not unfound_keys.empty? 
+    	raise Error, "no keys for #{unfound_keys}" 
+    end
 ## FIX END
     begin
       if GPGME.respond_to?('encrypt')
+	debug "encrypt using respond to #{recipients}"
         cipher = GPGME.encrypt(recipients, format_payload(payload), gpg_opts)
       else
         crypto = GPGME::Crypto.new
+	debug "encrypt Crypto.new #{recipients}\n\tsigner
+	#{gpg_opts[:signers]} #{gpg_opts[:sign]}"
         gpg_opts[:recipients] = recipients
         cipher = crypto.encrypt(format_payload(payload), gpg_opts).read
       end
-    debug "invalid recipients: #{cipher.invalid_recipients}"
+#    debug "invalid recipients: #{cipher.invalid_recipients}"
     rescue GPGME::Error => exc
       raise Error, gpgme_exc_msg(exc.message)
     end
@@ -457,12 +465,12 @@ private
     account = AccountManager.account_for from
     account ||= AccountManager.default_account
     if !account.gpgkey.nil?
-      opts = {:signer => account.gpgkey}
+      opts = {:signers => account.gpgkey}
     elsif AccountManager.user_emails.length == 1
       # only one account
       opts = {}
     else
-      opts = {:signer => from}
+      opts = {:signers => from}
     end
     opts
   end
