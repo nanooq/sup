@@ -71,7 +71,7 @@ class ContactListMode < LineCursorMode
     when :regular
       mode = ComposeMode.new :to => people
       BufferManager.spawn "new message", mode
-      mode.edit_message
+      mode.default_edit_message
     end
   end
 
@@ -130,7 +130,7 @@ protected
   def text_for_contact p
     aalias = ContactManager.alias_for(p) || ""
     [[:tagged_color, @tags.tagged?(p) ? ">" : " "],
-     [:none, sprintf("%-#{@awidth}s %-#{@nwidth}s %s", aalias, p.name, p.email)]]
+     [:text_color, sprintf("%-#{@awidth}s %-#{@nwidth}s %s", aalias, p.name, p.email)]]
   end
 
   def regen_text

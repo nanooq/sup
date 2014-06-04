@@ -33,6 +33,7 @@ EOS
     k.add_multi "Load all threads (! to confirm) :", '!' do |kk|
       kk.add :load_all_threads, "Load all threads (may list a _lot_ of threads)", '!'
     end
+    k.add :read_and_archive, "Archive thread (remove from inbox) and mark read", 'A'
     k.add :cancel_search, "Cancel current search", :ctrl_g
     k.add :reload, "Refresh view", '@'
     k.add :toggle_archived, "Toggle archived status", 'a'
@@ -235,6 +236,13 @@ EOS
     update
   end
 
+  def handle_killed_update sender, m
+    t = @ts_mutex.synchronize { @ts.thread_for m }
+    return unless t
+    hide_thread t
+    update
+  end
+
   def handle_spammed_update sender, m
     t = @ts_mutex.synchronize { @ts.thread_for m }
     return unless t
@@ -243,6 +251,10 @@ EOS
   end
 
   def handle_undeleted_update sender, m
+    add_or_unhide m
+  end
+
+  def handle_unkilled_update sender, m
     add_or_unhide m
   end
 
@@ -732,6 +744,47 @@ EOS
   end
   ignore_concurrent_calls :load_threads
 
+  def read_and_archive
+    return unless cursor_thread
+    thread = cursor_thread # to make sure lambda only knows about 'old' cursor_thread
+
+    was_unread = thread.labels.member? :unread
+    UndoManager.register "reading and archiving thread" do
+      thread.apply_label :inbox
+      thread.apply_label :unread if was_unread
+      add_or_unhide thread.first
+      Index.save_thread thread
+    end
+
+    cursor_thread.remove_label :unread
+    cursor_thread.remove_label :inbox
+    hide_thread cursor_thread
+    regen_text
+    Index.save_thread thread
+  end
+
+  def multi_read_and_archive threads
+    old_labels = threads.map { |t| t.labels.dup }
+
+    threads.each do |t|
+      t.remove_label :unread
+      t.remove_label :inbox
+      hide_thread t
+    end
+    regen_text
+
+    UndoManager.register "reading and archiving #{threads.size.pluralize 'thread'}" do
+      threads.zip(old_labels).each do |t, l|
+        t.labels = l
+        add_or_unhide t.first
+        Index.save_thread t
+      end
+      regen_text
+    end
+
+    threads.each { |t| Index.save_thread t }
+  end
+
   def resize rows, cols
     regen_text
     super
@@ -937,7 +990,7 @@ protected
       from +
       [
       [:size_widget_color, size_widget_text],
-      [:to_me_color, t.labels.member?(:attachment) ? "@" : " "],
+      [:with_attachment_color , t.labels.member?(:attachment) ? "@" : " "],
       [:to_me_color, directly_participated ? ">" : (participated ? '+' : " ")],
     ] +
       (t.labels - @hidden_labels).sort_by {|x| x.to_s}.map {
