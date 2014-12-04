@@ -128,7 +128,6 @@ EOS
     gpg_opts.merge!(gen_sign_user_opts(from))
     gpg_opts = HookManager.run("gpg-options",
                                {:operation => "sign", :options => gpg_opts}) || gpg_opts
-
     begin
       if GPGME.respond_to?('detach_sign')
         sig = GPGME.detach_sign(format_payload(payload), gpg_opts)
@@ -168,6 +167,14 @@ EOS
                                {:operation => "encrypt", :options => gpg_opts}) || gpg_opts
     recipients = to + [from]
     recipients = HookManager.run("gpg-expand-keys", { :recipients => recipients }) || recipients
+    debug "recipients in encrypt: #{recipients}"
+## FIXME: does not have problems if key for recipient (i.e. to-field) is not available as a result it will not provide any error if recipient will not be able to read the mail
+## proposed fix: must verify that a key exists for every recipient (maybe use ctx directly? --lf
+    ctx = GPGME::Ctx.new
+    unfound_keys = to.select {|t| (ctx.keys t).size <= 0} 
+    debug "unfound keys: #{unfound_keys}"
+    raise Error, "no keys for #{unfound_keys}" 
+## FIX END
     begin
       if GPGME.respond_to?('encrypt')
         cipher = GPGME.encrypt(recipients, format_payload(payload), gpg_opts)
@@ -176,6 +183,7 @@ EOS
         gpg_opts[:recipients] = recipients
         cipher = crypto.encrypt(format_payload(payload), gpg_opts).read
       end
+    debug "invalid recipients: #{cipher.invalid_recipients}"
     rescue GPGME::Error => exc
       raise Error, gpgme_exc_msg(exc.message)
     end
@@ -443,16 +451,18 @@ private
   # if    gpgkey set for this account, then use that
   # elsif only one account,            then leave blank so gpg default will be user
   # else                                    set --local-user from_email_address
+  # NOTE: multiple signers doesn't seem to work with gpgme (2.0.2, 1.0.8)
+  #       
   def gen_sign_user_opts from
     account = AccountManager.account_for from
     account ||= AccountManager.default_account
     if !account.gpgkey.nil?
-      opts = {:signers => account.gpgkey}
+      opts = {:signer => account.gpgkey}
     elsif AccountManager.user_emails.length == 1
       # only one account
       opts = {}
     else
-      opts = {:signers => from}
+      opts = {:signer => from}
     end
     opts
   end
